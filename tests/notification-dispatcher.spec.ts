@@ -259,4 +259,24 @@ describe("dispatchPaperclipEvent", () => {
     expect(result).toMatchObject({ posted: true, reason: "updated", channelId: "C-approvals" });
     expect(slackApiMock.postMessage).not.toHaveBeenCalled();
   });
+  it("leaves the card alone when a decided approval still reads as pending", async () => {
+    const context = ctx({ state: approvalCardState() });
+    const event = { ...approvalDecidedEvent("approval-decided-8"), payload: { approvalId: "approval-decided-8", companyPrefix: "COM", title: "Board Approval", status: "pending" } } as PluginEvent;
+
+    const result = await dispatchPaperclipEvent(context, "xoxb-redacted", config, event);
+
+    expect(result).toMatchObject({ posted: false, reason: "approval-still-pending" });
+    expect(slackApiMock.updateMessage).not.toHaveBeenCalled();
+    expect(slackApiMock.postMessage).not.toHaveBeenCalled();
+    expect(context.state.delete).not.toHaveBeenCalled();
+  });
+
+  it("tags thrown card-update failures with a bounded metric value", async () => {
+    slackApiMock.updateMessage.mockImplementation(async () => { throw new Error("fetch failed: ECONNREFUSED 127.0.0.1:3100"); });
+    const context = ctx({ state: approvalCardState() });
+
+    await dispatchPaperclipEvent(context, "xoxb-redacted", config, approvalDecidedEvent("approval-decided-9"));
+
+    expect(context.metrics.write).toHaveBeenCalledWith("slack_approval_card_update_failed", 1, expect.objectContaining({ error_code: "exception" }));
+  });
 });

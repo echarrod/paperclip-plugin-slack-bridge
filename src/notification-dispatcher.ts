@@ -35,6 +35,19 @@ export async function dispatchPaperclipEvent(
   if (!notification) return { posted: false, reason: "unsupported-event" };
   if (!isNotificationEnabled(notification, config)) return { posted: false, reason: "disabled" };
 
+  // A decided approval whose record still reads "pending" means the status write was
+  // not visible to the enrichment read yet. Rendering it would relabel the card
+  // "Approval requested" and mark the event seen, freezing that wrong state
+  // permanently. Leaving the live card alone lets a later delivery, the poller, or a
+  // Slack button resolve it correctly.
+  if (notification.kind === "approval.decided" && notification.status === "pending") {
+    ctx.logger.warn("Slack approval decision read back as still pending; leaving the card alone", {
+      companyId: notification.companyId,
+      approvalId: notification.approvalId,
+    });
+    return { posted: false, reason: "approval-still-pending" };
+  }
+
   const stateMode = options.stateMode ?? "persistent";
   const eventKey = notification.eventId;
   if (await hasSeen(ctx, notification.companyId, eventKey, stateMode)) {
@@ -46,7 +59,12 @@ export async function dispatchPaperclipEvent(
   // stored card (approval predates this state key) or when the edit is rejected.
   const updated = await updateApprovalCardInPlace(ctx, access, config, notification, stateMode);
   if (updated) {
+    // Seen first: if this throws, worker.ts re-dispatches the raw event, whose
+    // eventId differs from the enriched one and so is not deduped. Clearing the
+    // ref before that point would let the retry post a second receipt instead of
+    // finding the card. A surviving stale ref only costs one wasted edit.
     await markSeen(ctx, notification.companyId, eventKey, "updated", stateMode);
+    if (notification.approvalId) await forgetApprovalCard(ctx, notification.companyId, notification.approvalId, stateMode);
     await logForwardedActivity(ctx, notification, { channelId: updated.channelId, ts: updated.ts, reason: "existing-approval-card" }, stateMode);
     writeMetricBestEffort(ctx, "slack_notifications_sent", { event_type: notification.eventType, kind: notification.kind });
     return { posted: true, reason: "updated", channelId: updated.channelId, ts: updated.ts };
@@ -117,13 +135,13 @@ async function updateApprovalCardInPlace(
   let error: string | undefined;
   try {
     const result = await updateMessage(ctx, access, ref.channelId, ref.ts, renderNotification(notification, config));
-    if (result.ok) {
-      await forgetApprovalCard(ctx, notification.companyId, notification.approvalId, stateMode);
-      return ref;
-    }
+    if (result.ok) return ref;
     error = result.error ?? "unknown";
   } catch (thrown) {
-    error = thrown instanceof Error ? thrown.message : String(thrown);
+    // Collapsed to a fixed value: thrown messages carry response text and host
+    // addresses, which would be unbounded cardinality on a metric label.
+    ctx.logger.warn("Slack approval card update threw", { approvalId: notification.approvalId, error: thrown instanceof Error ? thrown.message : String(thrown) });
+    error = "exception";
   }
 
   // Deleted message, archived channel, revoked scope — a fresh post still tells
