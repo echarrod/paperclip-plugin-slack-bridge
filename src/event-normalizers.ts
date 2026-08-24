@@ -195,6 +195,13 @@ export function normalizeEvent(event: PluginEvent, paperclipBaseUrl = DEFAULT_PA
       const path = approvalId ? approvalPath(approvalId, companyPrefix) : undefined;
       return withUrl(base(event, "approval.created", title), paperclipBaseUrl, path);
     }
+    case "approval.decided": {
+      const approvalId = str(payload.approvalId) ?? event.entityId;
+      const title = str(payload.title) ?? str(payload.approvalTitle) ?? str(payload.issueTitle) ?? "Approval decided";
+      const companyPrefix = str(payload.companyPrefix) ?? prefixFromIdentifier(str(payload.identifier) ?? str(payload.issueIdentifier));
+      const path = approvalId ? approvalPath(approvalId, companyPrefix) : undefined;
+      return withUrl(base(event, "approval.decided", title), paperclipBaseUrl, path);
+    }
     case HUMAN_INPUT_EVENT_TYPE: {
       const issueId = str(payload.issueId) ?? event.entityId;
       const title = str(payload.title) ?? str(payload.issueTitle) ?? "Human input needed";

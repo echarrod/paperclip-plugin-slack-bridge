@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Fixed
+- `approval.decided` events are now normalized instead of being dropped, so approvals resolved in Paperclip (rather than from a Slack button) reach Slack at all. The event handler was registered in the worker but `normalizeEvent` had no case for it, so every decision fell through to `default: return null`.
+- A decided approval now edits the original approval card in place (`chat.update`) instead of posting a second message, using a new per-approval message ref in plugin state. Approvals whose card predates that state, or whose edit Slack rejects, fall back to posting a new message.
+
 ## [0.1.1] - 2026-07-12
 
 ### Changed
