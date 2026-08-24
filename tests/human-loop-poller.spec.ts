@@ -383,7 +383,8 @@ describe("humanLoopEventForIssue", () => {
     );
 
     expect(event).toMatchObject({
-      eventId: "hitl:v2:approval:company-1:approval-2:2026-06-28T00:05:00.000Z",
+      // Suffixed so a decision cannot be deduped away as its own creation.
+      eventId: "hitl:v2:approval:company-1:approval-2:2026-06-28T00:05:00.000Z:approval.decided",
       eventType: "approval.decided",
       entityId: "approval-2",
       payload: { approvalId: "approval-2", status: "approved", decisionNote: "Ship it." },

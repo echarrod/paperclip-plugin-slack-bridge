@@ -4,7 +4,7 @@ import { normalizeEvent } from "./event-normalizers.js";
 import { recordHostCallFailure, type HostCallSurface } from "./host-errors.js";
 import { renderNotification } from "./block-kit/index.js";
 import { postMessage, updateMessage } from "./slack-api.js";
-import { hasSeenEvent, markEventSeen, getApprovalMessage, setApprovalMessage, getIssueThread, setIssueThread } from "./state.js";
+import { hasSeenEvent, markEventSeen, clearApprovalMessage, getApprovalMessage, setApprovalMessage, getIssueThread, setIssueThread } from "./state.js";
 import { isNotificationEnabled, resolveConfiguredDestination, resolveDestination } from "./notification-policy.js";
 import type { DispatchResult, NormalizedNotification, SlackMessageRef, SlackNotificationsConfig, SlackThreadRef } from "./types.js";
 import type { PluginEvent } from "@paperclipai/plugin-sdk";
@@ -112,15 +112,41 @@ async function updateApprovalCardInPlace(
   }
   if (!ref) return null;
 
-  const result = await updateMessage(ctx, access, ref.channelId, ref.ts, renderNotification(notification, config));
-  if (!result.ok) {
-    // Deleted message, archived channel, revoked scope — a fresh post still tells
-    // the channel what happened, so this is a fallback rather than a failure.
-    ctx.logger.warn("Slack approval card update failed; posting a new message instead", { approvalId: notification.approvalId, channelId: ref.channelId, error: result.error });
-    writeMetricBestEffort(ctx, "slack_approval_card_update_failed", { event_type: notification.eventType, error_code: result.error ?? "unknown" });
-    return null;
+  // A network blip or a non-JSON body throws out of updateMessage rather than
+  // returning ok:false, and that must reach the fallback too, not the caller.
+  let error: string | undefined;
+  try {
+    const result = await updateMessage(ctx, access, ref.channelId, ref.ts, renderNotification(notification, config));
+    if (result.ok) {
+      await forgetApprovalCard(ctx, notification.companyId, notification.approvalId, stateMode);
+      return ref;
+    }
+    error = result.error ?? "unknown";
+  } catch (thrown) {
+    error = thrown instanceof Error ? thrown.message : String(thrown);
   }
-  return ref;
+
+  // Deleted message, archived channel, revoked scope — a fresh post still tells
+  // the channel what happened, so this is a fallback rather than a failure.
+  ctx.logger.warn("Slack approval card update failed; posting a new message instead", { approvalId: notification.approvalId, channelId: ref.channelId, error });
+  writeMetricBestEffort(ctx, "slack_approval_card_update_failed", { event_type: notification.eventType, error_code: error });
+  return null;
+}
+
+/** Best-effort like the write: a stale ref only costs one wasted edit attempt. */
+async function forgetApprovalCard(
+  ctx: Pick<PluginContext, "state" | "metrics" | "logger">,
+  companyId: string,
+  approvalId: string,
+  stateMode: DispatchStateMode,
+): Promise<void> {
+  if (stateMode === "memory") return;
+  try {
+    await clearApprovalMessage(ctx, companyId, approvalId);
+  } catch (error) {
+    const errorKind = recordHostCallFailure(ctx, dispatchSurface(stateMode), "state.set", error);
+    ctx.logger.warn("Slack approval card state cleanup failed", { approvalId, error_kind: errorKind, error: error instanceof Error ? error.message : String(error) });
+  }
 }
 
 /**

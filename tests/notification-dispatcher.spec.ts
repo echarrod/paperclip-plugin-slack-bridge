@@ -56,6 +56,7 @@ function approvalCardState(card: typeof storedCard | null = storedCard) {
     get: vi.fn(async (scope: { namespace: string; stateKey: string }) =>
       scope.namespace === "threads" && scope.stateKey.startsWith("approval.") ? card : null),
     set: vi.fn(async () => undefined),
+    delete: vi.fn(async () => undefined),
   };
 }
 
@@ -64,6 +65,7 @@ function ctx(overrides: Record<string, unknown> = {}) {
     state: {
       get: vi.fn(async () => { throw new Error("state.get should not be called"); }),
       set: vi.fn(async () => { throw new Error("state.set should not be called"); }),
+      delete: vi.fn(async () => { throw new Error("state.delete should not be called"); }),
     },
     http: { fetch: vi.fn() },
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -226,5 +228,35 @@ describe("dispatchPaperclipEvent", () => {
     expect(result).toMatchObject({ posted: true, reason: "posted", channelId: "C0000000000" });
     expect(slackApiMock.updateMessage).not.toHaveBeenCalled();
     expect(slackApiMock.postMessage).toHaveBeenCalledTimes(1);
+  });
+  it("clears the card ref once the approval is resolved in place", async () => {
+    const context = ctx({ state: approvalCardState() });
+
+    await dispatchPaperclipEvent(context, "xoxb-redacted", config, approvalDecidedEvent("approval-decided-5"));
+
+    expect(context.state.delete).toHaveBeenCalledWith(
+      expect.objectContaining({ scopeKind: "company", namespace: "threads", stateKey: "approval.approval-decided-5" }),
+    );
+  });
+
+  it("posts a new message when the card update throws instead of returning an error", async () => {
+    slackApiMock.updateMessage.mockImplementation(async () => { throw new Error("socket hang up"); });
+    const context = ctx({ state: approvalCardState() });
+
+    const result = await dispatchPaperclipEvent(context, "xoxb-redacted", config, approvalDecidedEvent("approval-decided-6"));
+
+    expect(result).toMatchObject({ posted: true, reason: "posted", channelId: "C0000000000" });
+    expect(slackApiMock.postMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("still resolves the card when clearing the ref afterwards fails", async () => {
+    const state = approvalCardState();
+    state.delete = vi.fn(async () => { throw scopeDenied; });
+    const context = ctx({ state });
+
+    const result = await dispatchPaperclipEvent(context, "xoxb-redacted", config, approvalDecidedEvent("approval-decided-7"));
+
+    expect(result).toMatchObject({ posted: true, reason: "updated", channelId: "C-approvals" });
+    expect(slackApiMock.postMessage).not.toHaveBeenCalled();
   });
 });

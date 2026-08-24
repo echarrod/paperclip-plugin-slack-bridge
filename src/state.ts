@@ -43,6 +43,16 @@ export async function setApprovalMessage(ctx: Pick<PluginContext, "state">, comp
   );
 }
 
+/** Once the card is resolved the ref can never be useful again, so it is not kept. */
+export async function clearApprovalMessage(ctx: Pick<PluginContext, "state">, companyId: string, approvalId: string): Promise<void> {
+  await ctx.state.delete({
+    scopeKind: "company",
+    scopeId: companyId,
+    namespace: STATE_NAMESPACES.threads,
+    stateKey: STATE_KEYS.approvalThread(approvalId),
+  });
+}
+
 export async function hasSeenEvent(ctx: Pick<PluginContext, "state">, companyId: string, eventKey: string): Promise<boolean> {
   const value = await ctx.state.get({
     scopeKind: "company",

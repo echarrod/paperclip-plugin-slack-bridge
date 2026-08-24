@@ -175,7 +175,7 @@ function approvalEventForDetail(
   const issueTitle = stringField(primaryIssue?.title);
 
   return {
-    eventId: approvalNotificationEventId(companyId, approvalId, approvalUpdatedAt),
+    eventId: approvalNotificationEventId(companyId, approvalId, approvalUpdatedAt, eventType),
     eventType,
     occurredAt: occurredAt ?? approvalUpdatedAt,
     actorId: "slack-notifications-approval-event",
@@ -203,8 +203,14 @@ function approvalEventForDetail(
   } as unknown as PluginEvent;
 }
 
-function approvalNotificationEventId(companyId: string, approvalId: string, approvalUpdatedAt: string): string {
-  return `hitl:v2:approval:${companyId}:${approvalId}:${approvalUpdatedAt}`;
+/**
+ * `approval.created` keeps the historical shape so existing dedupe state stays
+ * valid across an upgrade; other event types are suffixed so a decision cannot
+ * be deduped away as its own creation when the record's `updatedAt` has not moved.
+ */
+function approvalNotificationEventId(companyId: string, approvalId: string, approvalUpdatedAt: string, eventType = "approval.created"): string {
+  const base = `hitl:v2:approval:${companyId}:${approvalId}:${approvalUpdatedAt}`;
+  return eventType === "approval.created" ? base : `${base}:${eventType}`;
 }
 
 async function listCompanies(ctx: PollContext, config: SlackNotificationsConfig): Promise<Array<Record<string, unknown>>> {
